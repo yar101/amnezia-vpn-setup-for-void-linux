@@ -1,164 +1,170 @@
 # AmneziaVPN Setup for Void Linux
 
-Установочный скрипт и компоненты для запуска официального десктопного клиента **AmneziaVPN** (Qt6 GUI + фоновая служба `AmneziaVPN-service`) на **Void Linux** (glibc x86_64, инициализация `runit`, без `systemd` и `systemd-resolved`).
+<p align="center">
+  <b>English</b> | <b><a href="README.ru.md">Русский</a></b>
+</p>
+
+Installation script and system components to run the official desktop client **AmneziaVPN** (Qt6 GUI + `AmneziaVPN-service` daemon) on **Void Linux** (glibc x86_64, `runit` init system, without `systemd` or `systemd-resolved`).
 
 ---
 
-## Архитектура решения
+## Architecture & Solution Overview
 
-Официальный клиент AmneziaVPN жестко ориентирован на дистрибутивы с `systemd` и `systemd-resolved`. Для его полноценной работы в Void Linux реализовано:
+The official AmneziaVPN client is tightly coupled with `systemd` and `systemd-resolved`. To provide seamless and native operation on Void Linux with runit, this project implements:
 
-1. **Обход установщика:** Подмена `systemctl` фиктивной заглушкой на время выполнения официального `.run`-инсталлятора (Qt Installer Framework).
-2. **D-Bus DNS-мост (`amnezia-dns-bridge`):**
-   - Python-демон, реализующий интерфейс `org.freedesktop.resolve1` в системной шине D-Bus (`SetLinkDNS`, `SetLinkDNSEx`, `SetLinkDomains`, `RevertLink`, `RevertLinkDNS`).
-   - Перехватывает вызовы AmneziaVPN и транслирует их в `openresolv` (`resolvconf -a amnezia-vpn -x -m 0`) в эксклюзивном режиме, предотвращая утечки DNS (DNS Leaks).
-   - Передает поисковые домены (`search domains`) для корректного разрешения имен во внутренних сетях.
-   - Поддержка протоколов и туннельных интерфейсов: **AmneziaWG (`awg*`)**, **WireGuard (`wg*`)**, **OpenVPN (`tun*`)**, `tap*`, `amn*`, `ppp*`, `vpn*`.
-   - Встроенный **Watchdog ядра**: периодически отслеживает состояние сетевых интерфейсов и автоматически сбрасывает DNS при разрыве или закрытии VPN-соединения.
-3. **Безопасность D-Bus:** Изолированная политика в `/etc/dbus-1/system.d/org.freedesktop.resolve1.conf` с доступом только для `root`.
-4. **Службы Runit:** Создание и регистрация служб `AmneziaVPN` и `amnezia-dns-bridge` в `/etc/sv/` со встроенным потоковым логированием и ротацией через `svlogd`.
-5. **Интеграция с рабочим окружением:** Создание симлинков в `/usr/local/bin`, регистрация `.desktop`-файла и установка иконки приложения.
+1. **Installer Shim:** Bypasses installer requirements by providing a dummy `systemctl` stub during the execution of the official `.run` installer (Qt Installer Framework).
+2. **D-Bus DNS Bridge (`amnezia-dns-bridge`):**
+   - A Python daemon implementing the `org.freedesktop.resolve1` interface on the D-Bus system bus (`SetLinkDNS`, `SetLinkDNSEx`, `SetLinkDomains`, `RevertLink`, `RevertLinkDNS`).
+   - Intercepts DNS configuration requests from AmneziaVPN and translates them into `openresolv` (`resolvconf -a amnezia-vpn -x -m 0`) in exclusive mode, preventing DNS leaks.
+   - Passes search domains for seamless domain resolution across private subnets.
+   - Supports multiple protocol tunnel interfaces: **AmneziaWG (`awg*`)**, **WireGuard (`wg*`)**, **OpenVPN (`tun*`)**, `tap*`, `amn*`, `ppp*`, `vpn*`.
+   - Built-in **Kernel Watchdog**: Periodically monitors network interface states and automatically flushes DNS configuration upon unexpected tunnel drops or disconnects.
+3. **D-Bus Security:** Isolated security policy in `/etc/dbus-1/system.d/org.freedesktop.resolve1.conf` restricted to `root`.
+4. **Runit Services:** Automated service definitions for `AmneziaVPN` and `amnezia-dns-bridge` under `/etc/sv/` with integrated streaming logs and rotation via `svlogd`.
+5. **Desktop Integration:** Symlinks in `/usr/local/bin`, XDG `.desktop` launcher registration, and system icon placement.
 
 ---
 
-## Структура репозитория
+## Repository Structure
 
 ```text
 .
-├── install_amnezia_void.sh     # Скрипт автоматической установки
-├── uninstall_amnezia_void.sh   # Скрипт полного удаления
+├── install_amnezia_void.sh     # Automated installation script
+├── uninstall_amnezia_void.sh   # Complete uninstallation script
 ├── assets/
-│   └── AmneziaVPN.png          # Официальная иконка приложения
+│   └── AmneziaVPN.png          # Official application icon
 ├── src/
-│   └── amnezia-dns-bridge.py   # D-Bus DNS-мост (org.freedesktop.resolve1)
+│   └── amnezia-dns-bridge.py   # D-Bus DNS Bridge (org.freedesktop.resolve1)
 ├── conf/
-│   ├── org.freedesktop.resolve1.conf  # D-Bus политика безопасности
-│   └── AmneziaVPN.desktop             # Ярлык приложения XDG
+│   ├── org.freedesktop.resolve1.conf  # D-Bus security policy
+│   └── AmneziaVPN.desktop             # XDG desktop launcher
 └── services/
-    ├── AmneziaVPN/             # Runit-сервис AmneziaVPN-service (+ svlogd)
+    ├── AmneziaVPN/             # Runit service for AmneziaVPN-service (+ svlogd)
     │   ├── run
     │   └── log/run
-    └── amnezia-dns-bridge/     # Runit-сервис DNS-моста (+ svlogd)
+    └── amnezia-dns-bridge/     # Runit service for DNS bridge (+ svlogd)
         ├── run
         └── log/run
 ```
 
 ---
 
-## Системные зависимости
+## System Dependencies
 
-Скрипт автоматически устанавливает необходимые пакеты через `xbps-install`:
+The installation script automatically installs required packages via `xbps-install`:
 
-- **Сеть и протоколы:** `wireguard-tools`, `openvpn`, `openresolv`, `iptables`, `iproute2`
-- **DNS-мост и D-Bus:** `dbus`, `python3`, `python3-dbus`, `python3-gobject`, `procps-ng`
-- **Графическое окружение и Qt6:** `libsecret`, `libglvnd`, `libxcb`, `xcb-util-cursor`, `xcb-util-wm`, `xcb-util-keysyms`, `xcb-util-image`, `xcb-util-renderutil`, `libxkbcommon`, `libxkbcommon-x11`
-- **Ядро:** Модуль `tun` (`modprobe tun`)
+- **Networking & Utilities:** `curl`, `wireguard-tools`, `openvpn`, `openresolv`, `iptables`, `iproute2`
+- **DNS Bridge & D-Bus:** `dbus`, `python3`, `python3-dbus`, `python3-gobject`, `procps-ng`
+- **GUI Environment & Qt6:** `libsecret`, `libglvnd`, `libxcb`, `xcb-util-cursor`, `xcb-util-wm`, `xcb-util-keysyms`, `xcb-util-image`, `xcb-util-renderutil`, `libxkbcommon`, `libxkbcommon-x11`
+- **Kernel:** `tun` module (`modprobe tun`)
 
 ---
 
-## Установка
+## Installation
 
-1. Склонируйте репозиторий:
+1. Clone the repository:
    ```bash
    git clone https://github.com/yar101/amnezia-vpn-setup-for-void-linux.git
    cd amnezia-vpn-setup-for-void-linux
    ```
 
-2. Сделайте скрипт исполняемым:
+2. Make scripts executable:
    ```bash
    chmod +x install_amnezia_void.sh uninstall_amnezia_void.sh
    ```
 
-3. Запустите установку:
+3. Run the installer:
    ```bash
    ./install_amnezia_void.sh
    ```
-   > Если файл `AmneziaVPN_*_linux_x64.run` не найден в каталоге, скрипт автоматически скачает официальный релиз с GitHub Releases.
-   > Для установки конкретной версии можно передать её аргументом: `./install_amnezia_void.sh 5.0.0.5`
+
+   > [!NOTE]
+   > If the `AmneziaVPN_*_linux_x64.run` installer package is not present in the directory, the script will automatically fetch the latest release from GitHub Releases.
+   > You can specify a specific version as an argument: `./install_amnezia_void.sh 5.0.0.5`
 
 ---
 
-## Использование и управление службами (runit)
+## Usage and Service Management (runit)
 
-После завершения скрипта установки службы `AmneziaVPN` и `amnezia-dns-bridge` **автоматически активируются и запускаются**.
+Once installation finishes, both `AmneziaVPN` and `amnezia-dns-bridge` services are **automatically registered and started**.
 
-### 1. Проверка статуса служб
+### 1. Check Service Status
 ```bash
 sudo sv status amnezia-dns-bridge AmneziaVPN
 ```
 
-### 2. Запуск графического интерфейса
-Запустите приложение через меню вашей среды или из терминала:
+### 2. Launching the GUI
+Launch AmneziaVPN from your desktop application menu or run from a terminal:
 ```bash
 AmneziaVPN
 ```
 
-### 3. Управление службами
-- **Остановить:**
+### 3. Service Control
+- **Stop services:**
   ```bash
   sudo sv down AmneziaVPN amnezia-dns-bridge
   ```
-- **Запустить:**
+- **Start services:**
   ```bash
   sudo sv up AmneziaVPN amnezia-dns-bridge
   ```
-- **Отключить автозапуск:**
+- **Disable autostart:**
   ```bash
   sudo rm /var/service/AmneziaVPN /var/service/amnezia-dns-bridge
   ```
 
 ---
 
-## Логирование и диагностика
+## Logging and Diagnostics
 
-- **Логи сервиса VPN:**
+- **VPN Service logs:**
   ```bash
   tail -f /var/log/AmneziaVPN/current
   ```
-- **Логи DNS-моста:**
+- **DNS Bridge logs:**
   ```bash
   tail -f /var/log/amnezia-dns-bridge/current
   ```
-- **Просмотр текущих DNS записей openresolv:**
+- **Inspect active openresolv DNS records:**
   ```bash
   resolvconf -l
   ```
-- **Сброс DNS вручную (при необходимости):**
+- **Manually flush VPN DNS (if needed):**
   ```bash
   sudo resolvconf -f -d amnezia-vpn && sudo resolvconf -u
   ```
 
 ---
 
-## Устранение неполадок (Troubleshooting)
+## Troubleshooting
 
-1. **GUI сообщает: «Служба AmneziaVPN не запущена» / Service connection failed:**
-   - Проверьте статус службы runit:
+1. **GUI displays: "AmneziaVPN service is not running" / "Service connection failed":**
+   - Check the runit service status:
      ```bash
      sudo sv status AmneziaVPN
      ```
-   - Проверьте логи в `/var/log/AmneziaVPN/current`.
+   - Check the logs in `/var/log/AmneziaVPN/current`.
 
-2. **Не резолвятся домены после подключения:**
-   - Убедитесь, что служба `amnezia-dns-bridge` активна:
+2. **DNS names do not resolve after connecting:**
+   - Verify that `amnezia-dns-bridge` service is active:
      ```bash
      sudo sv status amnezia-dns-bridge
      ```
-   - Проверьте `/etc/resolv.conf` и вывод `resolvconf -l`. При активном туннеле должна присутствовать запись `nameserver` от `amnezia-vpn`.
+   - Check `/etc/resolv.conf` and the output of `resolvconf -l`. An active tunnel should show a `nameserver` entry associated with `amnezia-vpn`.
 
-3. **Конфликты с NetworkManager / dhcpcd:**
-   - Пакет `openresolv` автоматически объединяет DNS от разных провайдеров. DNS от `amnezia-vpn` имеет флаг эксклюзивности (`-x`) и наивысший приоритет (`-m 0`), что предотвращает утечки через локальный DNS сетевого адаптера.
+3. **Conflicts with NetworkManager / dhcpcd:**
+   - `openresolv` dynamically manages DNS configurations. The DNS configuration created for `amnezia-vpn` sets the exclusive flag (`-x`) and highest metric priority (`-m 0`), preventing queries from leaking via local network adapter resolvers.
 
 ---
 
-## Удаление
+## Uninstallation
 
-Для полного удаления AmneziaVPN, служб runit, DNS-моста и ярлыков выполните:
+To completely remove AmneziaVPN, runit services, the DNS bridge, and desktop entries:
 ```bash
 ./uninstall_amnezia_void.sh
 ```
 
-Для автоматического удаления без интерактивных запросов:
+For unattended / automated uninstallation without interactive prompts:
 ```bash
 ./uninstall_amnezia_void.sh -y
 ```
