@@ -1,0 +1,9 @@
+# Binaries and installers
+*.run
+*.tar.gz
+*.zip
+
+# Logs and temporary files
+*.log
+*.tmp
+tmp/
