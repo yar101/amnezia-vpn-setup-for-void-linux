@@ -168,6 +168,18 @@ class ResolveManager(dbus.service.Object):
             return dbus.Array(domains_list, signature='(isb)')
         return ""
 
+    @dbus.service.method(dbus.PROPERTIES_IFACE, in_signature='s', out_signature='a{sv}')
+    def GetAll(self, interface_name):
+        if interface_name == RESOLVE_MANAGER_IFACE:
+            domains_list = []
+            for ifidx, dlist in self.link_domains.items():
+                for dom, search_domain in dlist:
+                    domains_list.append((dbus.Int32(ifidx), dbus.String(dom), dbus.Boolean(search_domain)))
+            return dbus.Dictionary({
+                "Domains": dbus.Array(domains_list, signature='(isb)'),
+            }, signature='sv')
+        return dbus.Dictionary({}, signature='sv')
+
     def apply_dns(self):
         vpn_ips = []
         other_ips = []

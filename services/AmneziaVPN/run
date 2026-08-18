@@ -1,5 +1,6 @@
 #!/bin/sh
 exec 2>&1
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 modprobe tun 2>/dev/null || true
 if [ ! -x /opt/AmneziaVPN/bin/AmneziaVPN-service ] && [ ! -x /opt/AmneziaVPN/AmneziaVPN-service ]; then
     echo "[AmneziaVPN] Binary AmneziaVPN-service not found or not executable. Pausing..."

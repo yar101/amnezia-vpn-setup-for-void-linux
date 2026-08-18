@@ -1,5 +1,6 @@
 #!/bin/sh
 exec 2>&1
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 if [ ! -f /opt/AmneziaVPN/bin/amnezia-dns-bridge ]; then
     echo "[amnezia-dns-bridge] Binary /opt/AmneziaVPN/bin/amnezia-dns-bridge not found. Pausing..."
     pause 2>/dev/null || sleep 10

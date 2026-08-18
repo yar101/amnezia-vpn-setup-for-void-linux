@@ -137,7 +137,8 @@ echo -e "${YELLOW}[3/7] Подготовка и запуск инсталлят�
 RUN_PATH=""
 if [[ -f "${SCRIPT_DIR}/${RUN_INSTALLER}" ]]; then
     RUN_PATH="${SCRIPT_DIR}/${RUN_INSTALLER}"
-else
+elif [[ -z "$REQ_VERSION" || "$REQ_VERSION" == "latest" ]]; then
+    # Ищем любой подходящий локальный инсталлятор только если не была явно запрошена конкретная версия
     POSSIBLE_RUN=$(find "$SCRIPT_DIR" -maxdepth 1 -name "AmneziaVPN*linux*.run" | head -n 1)
     if [[ -n "$POSSIBLE_RUN" && -f "$POSSIBLE_RUN" ]]; then
         RUN_PATH="$POSSIBLE_RUN"
@@ -172,35 +173,30 @@ $SUDO mkdir -p "$INSTALL_DIR"
 echo "Запуск установки компонентов в $INSTALL_DIR..."
 $SUDO env PATH="$TMP_DIR/bin:$PATH" "$RUN_PATH" -p minimal --root "$INSTALL_DIR" --accept-licenses --default-answer --confirm-command in || true
 
-# Проверяем успешность установки
-AMN_BIN="$INSTALL_DIR/AmneziaVPN"
-AMN_SVC_BIN="$INSTALL_DIR/AmneziaVPN-service"
+# Проверяем успешность установки и определяем актуальные пути к бинарникам
+AMN_BIN=""
+AMN_SVC_BIN=""
 
 if [[ -f "$INSTALL_DIR/bin/AmneziaVPN" ]]; then
     AMN_BIN="$INSTALL_DIR/bin/AmneziaVPN"
+elif [[ -f "$INSTALL_DIR/AmneziaVPN" ]]; then
+    AMN_BIN="$INSTALL_DIR/AmneziaVPN"
 fi
+
 if [[ -f "$INSTALL_DIR/bin/AmneziaVPN-service" ]]; then
     AMN_SVC_BIN="$INSTALL_DIR/bin/AmneziaVPN-service"
+elif [[ -f "$INSTALL_DIR/AmneziaVPN-service" ]]; then
+    AMN_SVC_BIN="$INSTALL_DIR/AmneziaVPN-service"
 fi
 
-# Организуем структуру bin директории при необходимости
-$SUDO mkdir -p "$INSTALL_DIR/bin"
-if [[ -f "$INSTALL_DIR/AmneziaVPN" && ! -f "$INSTALL_DIR/bin/AmneziaVPN" ]]; then
-    $SUDO cp -a "$INSTALL_DIR/AmneziaVPN" "$INSTALL_DIR/bin/"
-    AMN_BIN="$INSTALL_DIR/bin/AmneziaVPN"
-fi
-if [[ -f "$INSTALL_DIR/AmneziaVPN-service" && ! -f "$INSTALL_DIR/bin/AmneziaVPN-service" ]]; then
-    $SUDO cp -a "$INSTALL_DIR/AmneziaVPN-service" "$INSTALL_DIR/bin/"
-    AMN_SVC_BIN="$INSTALL_DIR/bin/AmneziaVPN-service"
-fi
-
-if [[ ! -f "$AMN_BIN" || ! -f "$AMN_SVC_BIN" ]]; then
+if [[ -z "$AMN_BIN" || -z "$AMN_SVC_BIN" ]]; then
     echo -e "${RED}[ОШИБКА] Бинарные файлы AmneziaVPN не найдены в $INSTALL_DIR после установки!${NC}"
     exit 1
 fi
 
+$SUDO mkdir -p "$INSTALL_DIR/bin"
 $SUDO chmod -R u+rwX,go+rX "$INSTALL_DIR"
-$SUDO chmod 755 "$INSTALL_DIR/bin/"* 2>/dev/null || true
+$SUDO chmod 755 "$AMN_BIN" "$AMN_SVC_BIN" 2>/dev/null || true
 
 echo -e "${GREEN}[OK] AmneziaVPN успешно установлен в $INSTALL_DIR.${NC}\n"
 
