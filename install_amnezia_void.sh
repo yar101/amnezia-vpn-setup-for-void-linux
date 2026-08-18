@@ -456,24 +456,33 @@ sudo chmod 755 "$SV_AMN_DIR/run"
 
 echo -e "${GREEN}[OK] Сервисы runit созданы в /etc/sv/AmneziaVPN и /etc/sv/amnezia-dns-bridge.${NC}\n"
 
+# Активация и автоматический запуск сервисов в runit (/var/service)
+echo -e "${YELLOW}[7/7] Автоматическая активация и запуск служб в /var/service/...${NC}"
+if [[ ! -e /var/service/amnezia-dns-bridge ]]; then
+    sudo ln -sf "$SV_DNS_DIR" /var/service/
+fi
+if [[ ! -e /var/service/AmneziaVPN ]]; then
+    sudo ln -sf "$SV_AMN_DIR" /var/service/
+fi
+
+echo -e "${GREEN}[OK] Службы активированы и запущены в /var/service/.${NC}\n"
+
 # ------------------------------------------------------------------------------
-# 8. Финал: Инструкции по запуску
+# 8. Финал: Инструкции по использованию
 # ------------------------------------------------------------------------------
 echo -e "${BLUE}${BOLD}======================================================${NC}"
 echo -e "${GREEN}${BOLD}       Установка AmneziaVPN успешно завершена!       ${NC}"
 echo -e "${BLUE}${BOLD}======================================================${NC}\n"
 
-echo -e "1) ${BOLD}Активировать службы в Void Linux (runit):${NC}"
-echo -e "   ${GREEN}sudo ln -s /etc/sv/amnezia-dns-bridge /var/service/${NC}"
-echo -e "   ${GREEN}sudo ln -s /etc/sv/AmneziaVPN /var/service/${NC}\n"
+echo -e "${GREEN}✓ Службы AmneziaVPN и amnezia-dns-bridge автоматически запущены.${NC}\n"
 
-echo -e "2) ${BOLD}Проверить статус запущенных служб:${NC}"
+echo -e "1) ${BOLD}Проверить статус запущенных служб:${NC}"
 echo -e "   ${BLUE}sudo sv status amnezia-dns-bridge AmneziaVPN${NC}\n"
 
-echo -e "3) ${BOLD}Запустить графический интерфейс AmneziaVPN:${NC}"
+echo -e "2) ${BOLD}Запустить графический интерфейс AmneziaVPN:${NC}"
 echo -e "   ${BLUE}AmneziaVPN${NC}\n"
 
-echo -e "4) ${BOLD}Управление службами при необходимости:${NC}"
+echo -e "3) ${BOLD}Управление службами при необходимости:${NC}"
 echo -e "   Остановить:   ${YELLOW}sudo sv down AmneziaVPN amnezia-dns-bridge${NC}"
 echo -e "   Запустить:    ${YELLOW}sudo sv up AmneziaVPN amnezia-dns-bridge${NC}"
 echo -e "   Отключить:    ${YELLOW}sudo rm /var/service/AmneziaVPN /var/service/amnezia-dns-bridge${NC}"
