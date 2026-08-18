@@ -1,4 +1,14 @@
 #!/bin/sh
 exec 2>&1
 modprobe tun 2>/dev/null || true
-exec /opt/AmneziaVPN/bin/AmneziaVPN-service
+if [ ! -x /opt/AmneziaVPN/bin/AmneziaVPN-service ] && [ ! -x /opt/AmneziaVPN/AmneziaVPN-service ]; then
+    echo "[AmneziaVPN] Binary AmneziaVPN-service not found or not executable. Pausing..."
+    pause 2>/dev/null || sleep 10
+    exit 1
+fi
+
+if [ -x /opt/AmneziaVPN/bin/AmneziaVPN-service ]; then
+    exec /opt/AmneziaVPN/bin/AmneziaVPN-service
+else
+    exec /opt/AmneziaVPN/AmneziaVPN-service
+fi

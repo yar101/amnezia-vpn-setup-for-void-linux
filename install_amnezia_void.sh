@@ -44,8 +44,10 @@ if [[ $EUID -ne 0 ]]; then
     # Поддерживаем sudo сессию активной в фоновом режиме во время выполнения скрипта
     ( while true; do sudo -v; sleep 50; done; ) 2>/dev/null &
     SUDO_KEEP_ALIVE_PID=$!
+    SUDO="sudo"
 else
     SUDO_KEEP_ALIVE_PID=""
+    SUDO=""
 fi
 
 TMP_DIR=$(mktemp -d -t amnezia-install-XXXXXX)
@@ -64,8 +66,23 @@ echo -e "${GREEN}[OK] Права суперпользователя подтве
 # 3. Переменные и пути
 # ------------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="${1:-${AMNEZIA_VERSION:-5.0.0.5}}"
 INSTALL_DIR="/opt/AmneziaVPN"
+DEFAULT_VERSION="5.0.0.5"
+
+# Определение версии (параметр, переменная окружения или запрос latest)
+REQ_VERSION="${1:-${AMNEZIA_VERSION:-}}"
+if [[ -z "$REQ_VERSION" || "$REQ_VERSION" == "latest" ]]; then
+    echo "Определение последней стабильной версии AmneziaVPN с GitHub..."
+    LATEST_TAG=$(curl -s --connect-timeout 4 https://api.github.com/repos/amnezia-vpn/amnezia-client/releases/latest 2>/dev/null | grep '"tag_name":' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
+    if [[ -n "$LATEST_TAG" ]]; then
+        VERSION="$LATEST_TAG"
+    else
+        VERSION="$DEFAULT_VERSION"
+    fi
+else
+    VERSION="$REQ_VERSION"
+fi
+
 RUN_INSTALLER="AmneziaVPN_${VERSION}_linux_x64.run"
 DOWNLOAD_URL="https://github.com/amnezia-vpn/amnezia-client/releases/download/${VERSION}/${RUN_INSTALLER}"
 
@@ -99,13 +116,13 @@ DEPENDENCIES=(
 )
 
 echo "Обновление репозиториев и установка пакетов: ${DEPENDENCIES[*]}"
-sudo xbps-install -Sy "${DEPENDENCIES[@]}"
+$SUDO xbps-install -Sy "${DEPENDENCIES[@]}"
 
 # Проверка статуса D-Bus в runit
 if [[ ! -e /var/service/dbus ]]; then
     echo -e "${YELLOW}[ВНИМАНИЕ] Служба dbus не включена в /var/service/. Активируем...${NC}"
     if [[ -d /etc/sv/dbus ]]; then
-        sudo ln -sf /etc/sv/dbus /var/service/
+        $SUDO ln -sf /etc/sv/dbus /var/service/
         sleep 1
     fi
 fi
@@ -130,7 +147,11 @@ fi
 if [[ -z "$RUN_PATH" || ! -f "$RUN_PATH" ]]; then
     RUN_PATH="${SCRIPT_DIR}/${RUN_INSTALLER}"
     echo "Файл инсталлятора не найден локально. Загружаем с GitHub Releases..."
-    curl -L --progress-bar -o "$RUN_PATH" "$DOWNLOAD_URL"
+    if ! curl -fL --progress-bar -o "$RUN_PATH" "$DOWNLOAD_URL"; then
+        echo -e "${RED}[ОШИБКА] Не удалось скачать инсталлятор с $DOWNLOAD_URL. Проверьте версию и сетевое подключение.${NC}"
+        rm -f "$RUN_PATH"
+        exit 1
+    fi
 else
     echo "Найден локальный инсталлятор: $RUN_PATH"
 fi
@@ -146,10 +167,10 @@ EOF
 chmod +x "$TMP_DIR/bin/systemctl"
 
 # Создаем целевую директорию /opt/AmneziaVPN
-sudo mkdir -p "$INSTALL_DIR"
+$SUDO mkdir -p "$INSTALL_DIR"
 
 echo "Запуск установки компонентов в $INSTALL_DIR..."
-sudo env PATH="$TMP_DIR/bin:$PATH" "$RUN_PATH" -p minimal --root "$INSTALL_DIR" --accept-licenses --default-answer --confirm-command in || true
+$SUDO env PATH="$TMP_DIR/bin:$PATH" "$RUN_PATH" -p minimal --root "$INSTALL_DIR" --accept-licenses --default-answer --confirm-command in || true
 
 # Проверяем успешность установки
 AMN_BIN="$INSTALL_DIR/AmneziaVPN"
@@ -163,13 +184,13 @@ if [[ -f "$INSTALL_DIR/bin/AmneziaVPN-service" ]]; then
 fi
 
 # Организуем структуру bin директории при необходимости
-sudo mkdir -p "$INSTALL_DIR/bin"
+$SUDO mkdir -p "$INSTALL_DIR/bin"
 if [[ -f "$INSTALL_DIR/AmneziaVPN" && ! -f "$INSTALL_DIR/bin/AmneziaVPN" ]]; then
-    sudo cp -a "$INSTALL_DIR/AmneziaVPN" "$INSTALL_DIR/bin/"
+    $SUDO cp -a "$INSTALL_DIR/AmneziaVPN" "$INSTALL_DIR/bin/"
     AMN_BIN="$INSTALL_DIR/bin/AmneziaVPN"
 fi
 if [[ -f "$INSTALL_DIR/AmneziaVPN-service" && ! -f "$INSTALL_DIR/bin/AmneziaVPN-service" ]]; then
-    sudo cp -a "$INSTALL_DIR/AmneziaVPN-service" "$INSTALL_DIR/bin/"
+    $SUDO cp -a "$INSTALL_DIR/AmneziaVPN-service" "$INSTALL_DIR/bin/"
     AMN_SVC_BIN="$INSTALL_DIR/bin/AmneziaVPN-service"
 fi
 
@@ -178,8 +199,8 @@ if [[ ! -f "$AMN_BIN" || ! -f "$AMN_SVC_BIN" ]]; then
     exit 1
 fi
 
-sudo chmod -R 755 "$INSTALL_DIR"
-sudo chmod 755 "$INSTALL_DIR/bin/"* 2>/dev/null || true
+$SUDO chmod -R u+rwX,go+rX "$INSTALL_DIR"
+$SUDO chmod 755 "$INSTALL_DIR/bin/"* 2>/dev/null || true
 
 echo -e "${GREEN}[OK] AmneziaVPN успешно установлен в $INSTALL_DIR.${NC}\n"
 
@@ -189,16 +210,17 @@ echo -e "${GREEN}[OK] AmneziaVPN успешно установлен в $INSTALL
 echo -e "${YELLOW}[4/7] Установка D-Bus DNS-моста и настройка D-Bus политики...${NC}"
 
 # Копируем python-скрипт DNS-моста
-sudo cp "$SCRIPT_DIR/src/amnezia-dns-bridge.py" "$INSTALL_DIR/bin/amnezia-dns-bridge"
-sudo chmod 755 "$INSTALL_DIR/bin/amnezia-dns-bridge"
+$SUDO cp "$SCRIPT_DIR/src/amnezia-dns-bridge.py" "$INSTALL_DIR/bin/amnezia-dns-bridge"
+$SUDO chmod 755 "$INSTALL_DIR/bin/amnezia-dns-bridge"
 
 # Устанавливаем D-Bus политику безопасности
-sudo mkdir -p /etc/dbus-1/system.d
-sudo cp "$SCRIPT_DIR/conf/org.freedesktop.resolve1.conf" /etc/dbus-1/system.d/org.freedesktop.resolve1.conf
-sudo chmod 644 /etc/dbus-1/system.d/org.freedesktop.resolve1.conf
+$SUDO mkdir -p /etc/dbus-1/system.d
+$SUDO cp "$SCRIPT_DIR/conf/org.freedesktop.resolve1.conf" /etc/dbus-1/system.d/org.freedesktop.resolve1.conf
+$SUDO chmod 644 /etc/dbus-1/system.d/org.freedesktop.resolve1.conf
 
 # Перезагружаем конфигурацию системной шины D-Bus
-sudo pkill -HUP -x dbus-daemon 2>/dev/null || true
+$SUDO dbus-send --system --type=method_call --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ReloadConfig 2>/dev/null || true
+$SUDO pkill -HUP -x dbus-daemon 2>/dev/null || true
 
 echo -e "${GREEN}[OK] DNS-мост установлен и D-Bus сконфигурирован.${NC}\n"
 
@@ -208,26 +230,30 @@ echo -e "${GREEN}[OK] DNS-мост установлен и D-Bus сконфиг�
 echo -e "${YELLOW}[5/7] Интеграция с системой (ярлыки, симлинки, иконка)...${NC}"
 
 # Симлинки в /usr/local/bin
-sudo ln -sf "$AMN_BIN" /usr/local/bin/AmneziaVPN
-sudo ln -sf "$AMN_SVC_BIN" /usr/local/bin/AmneziaVPN-service
-sudo ln -sf "$INSTALL_DIR/bin/amnezia-dns-bridge" /usr/local/bin/amnezia-dns-bridge
+$SUDO ln -sf "$AMN_BIN" /usr/local/bin/AmneziaVPN
+$SUDO ln -sf "$AMN_SVC_BIN" /usr/local/bin/AmneziaVPN-service
+$SUDO ln -sf "$INSTALL_DIR/bin/amnezia-dns-bridge" /usr/local/bin/amnezia-dns-bridge
 
 # Установка иконки
-sudo mkdir -p /usr/share/pixmaps
+$SUDO mkdir -p /usr/share/pixmaps
 if [[ -f "$SCRIPT_DIR/assets/AmneziaVPN.png" ]]; then
-    sudo cp "$SCRIPT_DIR/assets/AmneziaVPN.png" /usr/share/pixmaps/AmneziaVPN.png
+    $SUDO cp "$SCRIPT_DIR/assets/AmneziaVPN.png" /usr/share/pixmaps/AmneziaVPN.png
 elif [[ -f "$INSTALL_DIR/AmneziaVPN.png" ]]; then
-    sudo cp "$INSTALL_DIR/AmneziaVPN.png" /usr/share/pixmaps/AmneziaVPN.png
+    $SUDO cp "$INSTALL_DIR/AmneziaVPN.png" /usr/share/pixmaps/AmneziaVPN.png
 fi
-sudo chmod 644 /usr/share/pixmaps/AmneziaVPN.png 2>/dev/null || true
+$SUDO chmod 644 /usr/share/pixmaps/AmneziaVPN.png 2>/dev/null || true
 
 # Установка .desktop файла
-sudo mkdir -p /usr/share/applications
-sudo cp "$SCRIPT_DIR/conf/AmneziaVPN.desktop" /usr/share/applications/AmneziaVPN.desktop
-sudo chmod 644 /usr/share/applications/AmneziaVPN.desktop
+$SUDO mkdir -p /usr/share/applications
+$SUDO cp "$SCRIPT_DIR/conf/AmneziaVPN.desktop" /usr/share/applications/AmneziaVPN.desktop
+$SUDO chmod 644 /usr/share/applications/AmneziaVPN.desktop
+
+if command -v update-desktop-database >/dev/null 2>&1; then
+    $SUDO update-desktop-database /usr/share/applications 2>/dev/null || true
+fi
 
 # Загрузка модуля ядра tun
-sudo modprobe tun 2>/dev/null || true
+$SUDO modprobe tun 2>/dev/null || true
 
 echo -e "${GREEN}[OK] Системная интеграция завершена.${NC}\n"
 
@@ -237,26 +263,26 @@ echo -e "${GREEN}[OK] Системная интеграция завершена
 echo -e "${YELLOW}[6/7] Настройка сервисов runit (/etc/sv/AmneziaVPN и /etc/sv/amnezia-dns-bridge)...${NC}"
 
 # Сервис 1: amnezia-dns-bridge
-sudo mkdir -p /etc/sv/amnezia-dns-bridge/log
-sudo cp "$SCRIPT_DIR/services/amnezia-dns-bridge/run" /etc/sv/amnezia-dns-bridge/run
-sudo cp "$SCRIPT_DIR/services/amnezia-dns-bridge/log/run" /etc/sv/amnezia-dns-bridge/log/run
-sudo chmod 755 /etc/sv/amnezia-dns-bridge/run /etc/sv/amnezia-dns-bridge/log/run
-sudo mkdir -p /var/log/amnezia-dns-bridge
+$SUDO mkdir -p /etc/sv/amnezia-dns-bridge/log
+$SUDO cp "$SCRIPT_DIR/services/amnezia-dns-bridge/run" /etc/sv/amnezia-dns-bridge/run
+$SUDO cp "$SCRIPT_DIR/services/amnezia-dns-bridge/log/run" /etc/sv/amnezia-dns-bridge/log/run
+$SUDO chmod 755 /etc/sv/amnezia-dns-bridge/run /etc/sv/amnezia-dns-bridge/log/run
+$SUDO mkdir -p /var/log/amnezia-dns-bridge
 
 # Сервис 2: AmneziaVPN
-sudo mkdir -p /etc/sv/AmneziaVPN/log
-sudo cp "$SCRIPT_DIR/services/AmneziaVPN/run" /etc/sv/AmneziaVPN/run
-sudo cp "$SCRIPT_DIR/services/AmneziaVPN/log/run" /etc/sv/AmneziaVPN/log/run
-sudo chmod 755 /etc/sv/AmneziaVPN/run /etc/sv/AmneziaVPN/log/run
-sudo mkdir -p /var/log/AmneziaVPN
+$SUDO mkdir -p /etc/sv/AmneziaVPN/log
+$SUDO cp "$SCRIPT_DIR/services/AmneziaVPN/run" /etc/sv/AmneziaVPN/run
+$SUDO cp "$SCRIPT_DIR/services/AmneziaVPN/log/run" /etc/sv/AmneziaVPN/log/run
+$SUDO chmod 755 /etc/sv/AmneziaVPN/run /etc/sv/AmneziaVPN/log/run
+$SUDO mkdir -p /var/log/AmneziaVPN
 
 # Активация служб в /var/service
 echo -e "${YELLOW}[7/7] Автоматическая активация и запуск служб в /var/service/...${NC}"
 if [[ ! -e /var/service/amnezia-dns-bridge ]]; then
-    sudo ln -sf /etc/sv/amnezia-dns-bridge /var/service/
+    $SUDO ln -sf /etc/sv/amnezia-dns-bridge /var/service/
 fi
 if [[ ! -e /var/service/AmneziaVPN ]]; then
-    sudo ln -sf /etc/sv/AmneziaVPN /var/service/
+    $SUDO ln -sf /etc/sv/AmneziaVPN /var/service/
 fi
 
 echo -e "${GREEN}[OK] Сервисы runit настроены и запущены.${NC}\n"

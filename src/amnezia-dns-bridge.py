@@ -15,11 +15,24 @@ import dbus.mainloop.glib
 import dbus.service
 from gi.repository import GLib
 
+# Нативная интеграция сигналов с GLib MainLoop
+try:
+    from gi.repository import GLibUnix
+    unix_signal_add = GLibUnix.signal_add
+except ImportError:
+    unix_signal_add = getattr(GLib, "unix_signal_add", None)
+
+# Настройка небуферизованного вывода для корректного логирования в svlogd
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(line_buffering=True)
+
 RESOLVE_SERVICE = "org.freedesktop.resolve1"
 RESOLVE_PATH = "/org/freedesktop/resolve1"
 RESOLVE_MANAGER_IFACE = "org.freedesktop.resolve1.Manager"
 
-TUNNEL_PREFIXES = ("tun", "amn", "awg", "wg", "tap", "ppp")
+TUNNEL_PREFIXES = ("tun", "amn", "awg", "wg", "tap", "ppp", "vpn")
 
 
 class ResolveManager(dbus.service.Object):
@@ -28,44 +41,122 @@ class ResolveManager(dbus.service.Object):
         self.link_dns = {}
         self.link_domains = {}
 
-    @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='ia(iay)', out_signature='')
-    def SetLinkDNS(self, ifindex, resolvers):
-        print(f"[DNS Bridge] SetLinkDNS для интерфейса {ifindex}")
+    def _parse_resolvers(self, resolvers):
         ips = []
-        for family, raw_addr in resolvers:
+        for item in resolvers:
             try:
-                addr_bytes = bytes(raw_addr)
-                if family == socket.AF_INET and len(addr_bytes) == 4:
-                    ip_str = socket.inet_ntop(socket.AF_INET, addr_bytes)
-                    ips.append(ip_str)
-                elif family == socket.AF_INET6 and len(addr_bytes) == 16:
-                    ip_str = socket.inet_ntop(socket.AF_INET6, addr_bytes)
-                    ips.append(ip_str)
+                family = item[0]
+                raw_addr = bytes(item[1])
+                if family == socket.AF_INET and len(raw_addr) == 4:
+                    ips.append(socket.inet_ntop(socket.AF_INET, raw_addr))
+                elif family == socket.AF_INET6 and len(raw_addr) == 16:
+                    ips.append(socket.inet_ntop(socket.AF_INET6, raw_addr))
             except Exception as e:
                 print(f"[DNS Bridge] Ошибка разбора IP: {e}")
+        return ips
 
+    def _parse_resolvers_ex(self, resolvers):
+        ips = []
+        for item in resolvers:
+            try:
+                family = item[0]
+                raw_addr = bytes(item[1])
+                # item[2] is port (uint16), item[3] is server_name (string)
+                if family == socket.AF_INET and len(raw_addr) == 4:
+                    ips.append(socket.inet_ntop(socket.AF_INET, raw_addr))
+                elif family == socket.AF_INET6 and len(raw_addr) == 16:
+                    ips.append(socket.inet_ntop(socket.AF_INET6, raw_addr))
+            except Exception as e:
+                print(f"[DNS Bridge] Ошибка разбора IP (Ex): {e}")
+        return ips
+
+    @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='ia(iay)', out_signature='')
+    def SetLinkDNS(self, ifindex, resolvers):
+        ifindex = int(ifindex)
+        print(f"[DNS Bridge] SetLinkDNS для интерфейса #{ifindex}")
+        ips = self._parse_resolvers(resolvers)
         if ips:
             print(f"[DNS Bridge] Установка DNS серверов для #{ifindex}: {ips}")
-            self.link_dns[int(ifindex)] = ips
-            self.apply_dns()
+            self.link_dns[ifindex] = ips
+        else:
+            print(f"[DNS Bridge] Очистка DNS серверов для #{ifindex}")
+            self.link_dns.pop(ifindex, None)
+        self.apply_dns()
+
+    @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='ia(iayqs)', out_signature='')
+    def SetLinkDNSEx(self, ifindex, resolvers):
+        ifindex = int(ifindex)
+        print(f"[DNS Bridge] SetLinkDNSEx для интерфейса #{ifindex}")
+        ips = self._parse_resolvers_ex(resolvers)
+        if ips:
+            print(f"[DNS Bridge] Установка DNS серверов (Ex) для #{ifindex}: {ips}")
+            self.link_dns[ifindex] = ips
+        else:
+            print(f"[DNS Bridge] Очистка DNS серверов (Ex) для #{ifindex}")
+            self.link_dns.pop(ifindex, None)
+        self.apply_dns()
 
     @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='ia(sb)', out_signature='')
     def SetLinkDomains(self, ifindex, domains):
-        self.link_domains[int(ifindex)] = [(str(d), bool(s)) for d, s in domains]
+        ifindex = int(ifindex)
+        dom_list = [(str(d), bool(s)) for d, s in domains]
+        print(f"[DNS Bridge] SetLinkDomains для #{ifindex}: {dom_list}")
+        if dom_list:
+            self.link_domains[ifindex] = dom_list
+        else:
+            self.link_domains.pop(ifindex, None)
+        self.apply_dns()
 
     @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='ib', out_signature='')
     def SetLinkDefaultRoute(self, ifindex, enable):
         pass
 
+    @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='is', out_signature='')
+    def SetLinkLLMNR(self, ifindex, mode):
+        pass
+
+    @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='is', out_signature='')
+    def SetLinkMulticastDNS(self, ifindex, mode):
+        pass
+
+    @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='is', out_signature='')
+    def SetLinkDNSSEC(self, ifindex, mode):
+        pass
+
+    @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='is', out_signature='')
+    def SetLinkRoutingPolicy(self, ifindex, mode):
+        pass
+
+    @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='i', out_signature='')
+    def RevertLinkDNS(self, ifindex):
+        ifindex = int(ifindex)
+        print(f"[DNS Bridge] RevertLinkDNS для интерфейса #{ifindex}")
+        if self.link_dns.pop(ifindex, None) is not None:
+            self.apply_dns()
+
+    @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='i', out_signature='')
+    def RevertLinkDomains(self, ifindex):
+        ifindex = int(ifindex)
+        print(f"[DNS Bridge] RevertLinkDomains для интерфейса #{ifindex}")
+        if self.link_domains.pop(ifindex, None) is not None:
+            self.apply_dns()
+
     @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='i', out_signature='')
     def RevertLink(self, ifindex):
         ifindex = int(ifindex)
-        print(f"[DNS Bridge] RevertLink для интерфейса {ifindex}")
-        if ifindex in self.link_dns:
-            del self.link_dns[ifindex]
-        if ifindex in self.link_domains:
-            del self.link_domains[ifindex]
-        self.apply_dns()
+        print(f"[DNS Bridge] RevertLink для интерфейса #{ifindex}")
+        removed_dns = self.link_dns.pop(ifindex, None)
+        removed_dom = self.link_domains.pop(ifindex, None)
+        if removed_dns is not None or removed_dom is not None:
+            self.apply_dns()
+
+    @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='', out_signature='')
+    def FlushCaches(self):
+        print("[DNS Bridge] FlushCaches вызван (no-op)")
+
+    @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='', out_signature='')
+    def ResetServerFeatures(self):
+        print("[DNS Bridge] ResetServerFeatures вызван (no-op)")
 
     @dbus.service.method(dbus.PROPERTIES_IFACE, in_signature='ss', out_signature='v')
     def Get(self, interface_name, property_name):
@@ -99,8 +190,23 @@ class ResolveManager(dbus.service.Object):
         # Туннельные VPN DNS идут первыми для предотвращения DNS Leak
         all_ips = vpn_ips + [ip for ip in other_ips if ip not in vpn_ips]
 
+        # Сбор search domains (только реальные поисковые домены, исключая routing-only маркера вроде '~.')
+        search_domains = []
+        for dlist in self.link_domains.values():
+            for dom, is_search in dlist:
+                clean_dom = dom.strip().lstrip('~.')
+                # В resolv.conf добавляются только домены с флагом поиска (не routing-only)
+                if is_search and not dom.strip().startswith('~') and clean_dom and clean_dom not in search_domains:
+                    search_domains.append(clean_dom)
+
         if all_ips:
-            resolv_data = "# Generated by amnezia-dns-bridge\n" + "".join([f"nameserver {ip}\n" for ip in all_ips])
+            resolv_lines = ["# Generated by amnezia-dns-bridge"]
+            for ip in all_ips:
+                resolv_lines.append(f"nameserver {ip}")
+            if search_domains:
+                resolv_lines.append(f"search {' '.join(search_domains)}")
+            resolv_data = "\n".join(resolv_lines) + "\n"
+
             try:
                 proc = subprocess.run(
                     ["resolvconf", "-a", "amnezia-vpn", "-x", "-m", "0"],
@@ -109,14 +215,14 @@ class ResolveManager(dbus.service.Object):
                     check=False,
                 )
                 if proc.returncode == 0:
-                    print(f"[DNS Bridge] DNS успешно применен через resolvconf: {all_ips}")
+                    print(f"[DNS Bridge] DNS успешно применен через resolvconf: {all_ips} (domains: {search_domains})")
                 else:
                     print(f"[DNS Bridge] Предупреждение resolvconf (код {proc.returncode}): {proc.stderr.decode().strip()}")
             except FileNotFoundError:
                 print("[DNS Bridge] Утилита resolvconf не найдена! Установите пакет openresolv.")
         else:
             try:
-                subprocess.run(["resolvconf", "-d", "amnezia-vpn"], capture_output=True, check=False)
+                subprocess.run(["resolvconf", "-f", "-d", "amnezia-vpn"], capture_output=True, check=False)
                 print("[DNS Bridge] Записи DNS для amnezia-vpn удалены из resolvconf.")
             except FileNotFoundError:
                 pass
@@ -128,7 +234,7 @@ class ResolveManager(dbus.service.Object):
 
     def check_interfaces(self):
         """Watchdog: проверяет, живы ли интерфейсы. Если VPN туннель закрыт, автоматически сбрасывает DNS."""
-        if not self.link_dns:
+        if not self.link_dns and not self.link_domains:
             return True
         changed = False
         for ifidx in list(self.link_dns.keys()):
@@ -136,10 +242,18 @@ class ResolveManager(dbus.service.Object):
                 socket.if_indextoname(ifidx)
             except OSError:
                 print(f"[DNS Bridge] Интерфейс #{ifidx} удален/закрыт. Автоматический сброс DNS...")
-                del self.link_dns[ifidx]
-                if ifidx in self.link_domains:
-                    del self.link_domains[ifidx]
+                self.link_dns.pop(ifidx, None)
+                self.link_domains.pop(ifidx, None)
                 changed = True
+
+        for ifidx in list(self.link_domains.keys()):
+            if ifidx not in self.link_dns:
+                try:
+                    socket.if_indextoname(ifidx)
+                except OSError:
+                    self.link_domains.pop(ifidx, None)
+                    changed = True
+
         if changed:
             self.apply_dns()
         return True
@@ -155,6 +269,9 @@ def main():
 
     try:
         bus_name = dbus.service.BusName(RESOLVE_SERVICE, bus, do_not_queue=True)
+    except dbus.exceptions.NameExistsException:
+        print(f"[DNS Bridge] Ошибка: имя {RESOLVE_SERVICE} уже зарегистрировано другим процессом на D-Bus!")
+        sys.exit(1)
     except Exception as e:
         print(f"[DNS Bridge] Не удалось зарегистрировать имя {RESOLVE_SERVICE} на D-Bus: {e}")
         sys.exit(1)
@@ -165,14 +282,21 @@ def main():
     # Запуск периодического watchdog каждые 2 секунды
     GLib.timeout_add_seconds(2, manager.check_interfaces)
 
-    def handle_signal(sig, frame):
+    def handle_signal(*args):
         print("\n[DNS Bridge] Получен сигнал остановки, восстановление DNS...")
         manager.cleanup()
         loop.quit()
+        return False
 
-    signal.signal(signal.SIGTERM, handle_signal)
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGHUP, handle_signal)
+    # Регистрация сигналов ОС: предпочтительно через GLibUnix для нативной интеграции с GLib.MainLoop
+    if unix_signal_add is not None:
+        unix_signal_add(GLib.PRIORITY_HIGH, signal.SIGTERM, handle_signal)
+        unix_signal_add(GLib.PRIORITY_HIGH, signal.SIGINT, handle_signal)
+        unix_signal_add(GLib.PRIORITY_HIGH, signal.SIGHUP, handle_signal)
+    else:
+        signal.signal(signal.SIGTERM, lambda s, f: handle_signal())
+        signal.signal(signal.SIGINT, lambda s, f: handle_signal())
+        signal.signal(signal.SIGHUP, lambda s, f: handle_signal())
 
     print("[DNS Bridge] D-Bus DNS-мост успешно запущен и ожидает запросов.")
     try:
