@@ -3,6 +3,10 @@
 *.tar.gz
 *.zip
 
+# Python
+__pycache__/
+*.pyc
+
 # Logs and temporary files
 *.log
 *.tmp

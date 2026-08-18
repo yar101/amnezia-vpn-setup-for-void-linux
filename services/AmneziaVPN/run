@@ -1,0 +1,4 @@
+#!/bin/sh
+exec 2>&1
+modprobe tun 2>/dev/null || true
+exec /opt/AmneziaVPN/bin/AmneziaVPN-service

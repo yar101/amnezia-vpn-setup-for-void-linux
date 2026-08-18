@@ -1,0 +1,3 @@
+#!/bin/sh
+exec 2>&1
+exec /usr/bin/python3 /opt/AmneziaVPN/bin/amnezia-dns-bridge
