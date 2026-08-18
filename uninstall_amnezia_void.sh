@@ -45,6 +45,9 @@ $SUDO sv force-stop /var/service/AmneziaVPN /var/service/amnezia-dns-bridge 2>/d
 # 2. Удаляем симлинки автозапуска
 $SUDO rm -f /var/service/AmneziaVPN /var/service/amnezia-dns-bridge 2>/dev/null || true
 # 3. Гарантируем завершение фоновых процессов
+$SUDO pkill -TERM -f AmneziaVPN-service 2>/dev/null || true
+$SUDO pkill -TERM -f amnezia-dns-bridge 2>/dev/null || true
+sleep 0.5
 $SUDO pkill -9 -f AmneziaVPN-service 2>/dev/null || true
 $SUDO pkill -9 -f amnezia-dns-bridge 2>/dev/null || true
 # 4. Удаляем каталоги определений служб

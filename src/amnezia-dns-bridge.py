@@ -124,6 +124,10 @@ class ResolveManager(dbus.service.Object):
         pass
 
     @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='is', out_signature='')
+    def SetLinkDNSOverTLS(self, ifindex, mode):
+        pass
+
+    @dbus.service.method(RESOLVE_MANAGER_IFACE, in_signature='is', out_signature='')
     def SetLinkRoutingPolicy(self, ifindex, mode):
         pass
 
@@ -206,7 +210,7 @@ class ResolveManager(dbus.service.Object):
         search_domains = []
         for dlist in self.link_domains.values():
             for dom, is_search in dlist:
-                clean_dom = dom.strip().lstrip('~.')
+                clean_dom = dom.strip().lstrip('~.').rstrip('.')
                 # В resolv.conf добавляются только домены с флагом поиска (не routing-only)
                 if is_search and not dom.strip().startswith('~') and clean_dom and clean_dom not in search_domains:
                     search_domains.append(clean_dom)
@@ -252,7 +256,7 @@ class ResolveManager(dbus.service.Object):
         for ifidx in list(self.link_dns.keys()):
             try:
                 socket.if_indextoname(ifidx)
-            except OSError:
+            except (OSError, ValueError):
                 print(f"[DNS Bridge] Интерфейс #{ifidx} удален/закрыт. Автоматический сброс DNS...")
                 self.link_dns.pop(ifidx, None)
                 self.link_domains.pop(ifidx, None)
@@ -262,7 +266,7 @@ class ResolveManager(dbus.service.Object):
             if ifidx not in self.link_dns:
                 try:
                     socket.if_indextoname(ifidx)
-                except OSError:
+                except (OSError, ValueError):
                     self.link_domains.pop(ifidx, None)
                     changed = True
 

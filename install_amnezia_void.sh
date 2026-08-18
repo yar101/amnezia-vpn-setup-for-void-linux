@@ -83,7 +83,8 @@ else
     VERSION="$REQ_VERSION"
 fi
 
-RUN_INSTALLER="AmneziaVPN_${VERSION}_linux_x64.run"
+VERSION_CLEAN="${VERSION#v}"
+RUN_INSTALLER="AmneziaVPN_${VERSION_CLEAN}_linux_x64.run"
 DOWNLOAD_URL="https://github.com/amnezia-vpn/amnezia-client/releases/download/${VERSION}/${RUN_INSTALLER}"
 
 # ------------------------------------------------------------------------------
