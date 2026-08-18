@@ -149,11 +149,17 @@ fi
 if [[ -z "$RUN_PATH" || ! -f "$RUN_PATH" ]]; then
     RUN_PATH="${SCRIPT_DIR}/${RUN_INSTALLER}"
     echo "Файл инсталлятора не найден локально. Загружаем с GitHub Releases..."
-    if ! curl -fL --progress-bar -o "$RUN_PATH" "$DOWNLOAD_URL"; then
-        echo -e "${RED}[ОШИБКА] Не удалось скачать инсталлятор с $DOWNLOAD_URL. Проверьте версию и сетевое подключение.${NC}"
+    if ! curl -# -fL -o "$RUN_PATH" "$DOWNLOAD_URL" 2>&1 | while read -r -d $'\r' line || [[ -n "$line" ]]; do
+        pct=$(echo "$line" | grep -o '[0-9.]\+%' | tail -n 1 || true)
+        if [[ -n "$pct" ]]; then
+            printf "\rЗагрузка: %s   " "$pct"
+        fi
+    done; then
+        echo -e "\n${RED}[ОШИБКА] Не удалось скачать инсталлятор с $DOWNLOAD_URL. Проверьте версию и сетевое подключение.${NC}"
         rm -f "$RUN_PATH"
         exit 1
     fi
+    echo ""
 else
     echo "Найден локальный инсталлятор: $RUN_PATH"
 fi

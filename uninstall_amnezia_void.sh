@@ -41,15 +41,24 @@ fi
 
 echo -e "${YELLOW}[1/4] Остановка и отключение служб runit...${NC}"
 # 1. Принудительно останавливаем службы перед удалением симлинков
-$SUDO sv force-stop /var/service/AmneziaVPN /var/service/amnezia-dns-bridge 2>/dev/null || true
+$SUDO sv -w 5 force-stop /var/service/AmneziaVPN 2>/dev/null || true
+$SUDO sv -w 5 force-stop /var/service/amnezia-dns-bridge 2>/dev/null || true
 # 2. Удаляем симлинки автозапуска
 $SUDO rm -f /var/service/AmneziaVPN /var/service/amnezia-dns-bridge 2>/dev/null || true
 # 3. Гарантируем завершение фоновых процессов
-$SUDO pkill -TERM -f AmneziaVPN-service 2>/dev/null || true
-$SUDO pkill -TERM -f amnezia-dns-bridge 2>/dev/null || true
+$SUDO pkill -x AmneziaVPN-service 2>/dev/null || true
+$SUDO pkill -x AmneziaVPN 2>/dev/null || true
+for pid in $(pgrep -f "^/usr/bin/python3 .*amnezia-dns-bridge" 2>/dev/null || true); do
+    if [[ -n "$pid" && "$pid" != "$$" ]]; then
+        $SUDO kill -TERM "$pid" 2>/dev/null || true
+    fi
+done
 sleep 0.5
-$SUDO pkill -9 -f AmneziaVPN-service 2>/dev/null || true
-$SUDO pkill -9 -f amnezia-dns-bridge 2>/dev/null || true
+for pid in $(pgrep -f "^/usr/bin/python3 .*amnezia-dns-bridge" 2>/dev/null || true); do
+    if [[ -n "$pid" && "$pid" != "$$" ]]; then
+        $SUDO kill -9 "$pid" 2>/dev/null || true
+    fi
+done
 # 4. Удаляем каталоги определений служб
 $SUDO rm -rf /etc/sv/AmneziaVPN /etc/sv/amnezia-dns-bridge 2>/dev/null || true
 
@@ -80,7 +89,8 @@ if [[ "$AUTO_CONFIRM" == "true" ]]; then
     $SUDO rm -rf /var/log/AmneziaVPN /var/log/amnezia-dns-bridge
     echo "Логи удалены."
 else
-    read -rp "Удалить логи из /var/log/AmneziaVPN и /var/log/amnezia-dns-bridge? (y/N): " choice
+    stty sane 2>/dev/null || true
+    read -rp "Удалить логи из /var/log/AmneziaVPN и /var/log/amnezia-dns-bridge? (y/N): " choice </dev/tty || choice="n"
     if [[ "$choice" =~ ^[Yy]$ ]]; then
         $SUDO rm -rf /var/log/AmneziaVPN /var/log/amnezia-dns-bridge
         echo "Логи удалены."
